@@ -3,8 +3,8 @@ from threading import Lock
 class Clock:
 	"""Lamport logical clock"""
 
-	def __init__(self, delta = 1):
-		self.clk = 0
+	def __init__(self, start=0, delta = 1):
+		self.clk = start
 		self.delta = delta
 		self.mutex = Lock()
 	
