@@ -29,12 +29,6 @@ class Mutex:
 			mutexes[self.tag] = self
 			globals()['mutex_num'] += 1
 
-		
-
-	def __del__(self):
-		with mutexes_lock:
-			del mutexes[self.tag]
-
 
 	def lock(self):
 		self.interested = True
@@ -86,24 +80,30 @@ class Mutex:
 				self.replies_condition.release()
 
 
-__rcv_thread_run = True
 
 def __receive_thread():
-	while __rcv_thread_run:
+	run = True
+	while run:
 		data = comm.recv(source=MPI.ANY_SOURCE)
 		clock.increase(data['timestamp'])
 		#print "recv", rank, data
 		
-		with mutexes_lock:
-			if not (data['tag'] in mutexes):
-				reply = {'type': 'mutex_reply', 'tag': data['tag'], 'timestamp': clock.value(), 'sender': rank}
-				with comm_lock:
-					comm.send(reply, dest=data['sender'])
-			elif data['type'] == 'mutex_lock':
-				mutexes[data['tag']].on_request(data)
-			elif data['type'] == 'mutex_reply':
-				mutexes[data['tag']].on_reply()
+		if data['type'].startswith('mutex'):
+			with mutexes_lock:
+				if not (data['tag'] in mutexes):
+					reply = {'type': 'mutex_reply', 'tag': data['tag'], 'timestamp': clock.value(), 'sender': rank}
+					with comm_lock:
+						comm.send(reply, dest=data['sender'])
+				elif data['type'] == 'mutex_lock':
+					mutexes[data['tag']].on_request(data)
+				elif data['type'] == 'mutex_reply':
+					mutexes[data['tag']].on_reply()
+		elif data['type'] == "exit":
+			run = False
 
 t = threading.Thread(target=__receive_thread)
 t.start()
 
+
+def finalize():
+	comm.send({'type': 'exit', 'timestamp': clock.value()}, dest=rank)
