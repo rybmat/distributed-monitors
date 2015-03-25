@@ -46,19 +46,20 @@ class Mutex:
 
 
 	def unlock(self):
-		with self.deffered_lock:
-			self.interested = False	
-			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
-			
-			with comm_lock:
-				for d in self.deffered:
-					comm.send(data, dest=d)
-			self.deffered = []
+		if self.interested:
+			with self.deffered_lock:
+				self.interested = False	
+				data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+				
+				with comm_lock:
+					for d in self.deffered:
+						comm.send(data, dest=d)
+				self.deffered = []
 
-		with self.replies_number_lock:
-			self.replies_number = 0
+			with self.replies_number_lock:
+				self.replies_number = 0
 
-		clock.increase()
+			clock.increase()
 
 
 	def on_request(self, request):
