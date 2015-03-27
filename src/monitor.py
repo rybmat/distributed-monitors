@@ -10,12 +10,18 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 clock = Clock()
+
+###########################################################
+###	Mutex
+###########################################################
+
 mutexes_lock = threading.Lock()
 mutexes = {}
 mutex_num = 0
 
-class Mutex:
+class Mutex(object):
 	def __init__(self):
+		self.interested_lock = threading.Lock()
 		self.interested = False
 		self.replies_condition = threading.Condition()
 		self.replies_number_lock = threading.Lock()
@@ -32,7 +38,6 @@ class Mutex:
 
 	def lock(self):
 		self.interested = True
-		clock.increase()
 		
 		data = {'type': 'mutex_lock', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
 		with comm_lock:
@@ -59,11 +64,8 @@ class Mutex:
 			with self.replies_number_lock:
 				self.replies_number = 0
 
-			clock.increase()
-
-
 	def on_request(self, request):
-		if (not self.interested) or (clock.value() > request['timestamp']):
+		if (not self.interested) or (clock.value() > request['timestamp']) or (request['sender'] == rank):
 			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
 			with comm_lock:
 				comm.send(data, dest=request['sender'])
@@ -82,12 +84,16 @@ class Mutex:
 
 
 
+###########################################################
+###	receiving  thread
+###########################################################
+
 def __receive_thread():
 	run = True
 	while run:
 		data = comm.recv(source=MPI.ANY_SOURCE)
 		clock.increase(data['timestamp'])
-		#print "recv", rank, data
+		#print "recv", rank, clock.value(), data
 		
 		if data['type'].startswith('mutex'):
 			with mutexes_lock:

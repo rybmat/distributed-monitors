@@ -4,7 +4,7 @@ mutex = Mutex()
 
 mutex.lock()
 
-print rank, "dupa"
+print rank, "test"
 
 mutex.unlock()
 finalize()
