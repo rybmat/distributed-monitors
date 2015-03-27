@@ -83,6 +83,46 @@ class Mutex(object):
 				self.replies_condition.release()
 
 
+###########################################################
+###	Conditional Variable
+###########################################################
+
+condvar_lock = threading.Lock()
+condvars = {}
+condvar_num = 0
+
+class ConditionalVariable(object):
+
+	def __init__(self):
+		with condvar_lock:
+			self.tag = globals()['condvar_num']
+			condvars[self.tag] = self
+			globals()['condvar_num'] += 1
+
+		self.conditional = threading.Conditional()
+		self.is_waiting = False
+
+	def wait(self, mutex):
+		mutex.unlock()
+		self.conditional.acquire()
+		self.is_waiting = True
+		self.conditional.wait()
+		self.conditional.release()
+		mutex.lock()
+
+	def notify(slef):
+		data = {'type': 'conditional_notify', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+		with comm_lock:
+			for i in range(comm.Get_size()):
+				if i != rank:
+					comm.send(data, dest=i)
+
+	def on_notify(self):
+		self.conditional.acquire()
+		if self.is_waiting:
+			self.conditional.notify()
+			self.is_waiting = False
+		self.conditional.release()
 
 ###########################################################
 ###	receiving  thread
