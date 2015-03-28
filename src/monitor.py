@@ -5,11 +5,20 @@ from pprint import pprint
 
 from __clock import Clock
 
+clock = Clock()
+
 comm_lock = threading.Lock()
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-clock = Clock()
+def multicast(data, to=None, ommit=tuple()):
+	if to is None:
+		to = range(comm.Get_size())
+	
+	clock.increase()
+	for i in to:
+		if i not in ommit:
+			comm.send(data, dest=i)
 
 ###########################################################
 ###	Mutex
@@ -42,10 +51,7 @@ class Mutex(object):
 		self.interested = True
 		
 		data = {'type': 'mutex_lock', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
-		with comm_lock:
-			for i in range(comm.Get_size()):
-				if i != rank:
-					comm.send(data, dest=i)
+		multicast(data, ommit=[rank])
 
 		self.replies_condition.acquire()
 		self.replies_condition.wait()
@@ -57,10 +63,7 @@ class Mutex(object):
 			with self.deffered_lock:
 				self.interested = False	
 				data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
-				
-				with comm_lock:
-					for d in self.deffered:
-						comm.send(data, dest=d)
+				multicast(data, to=self.deffered)
 				self.deffered = []
 
 			with self.replies_number_lock:
@@ -69,10 +72,10 @@ class Mutex(object):
 	def on_request(self, request):
 		""" action invoked by receiving thread when lock request received
 		"""
-		if (not self.interested) or (clock.value() > request['timestamp']) or (request['sender'] == rank):
+		if (not self.interested) or (clock.value() > request['timestamp']):
 			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
-			with comm_lock:
-				comm.send(data, dest=request['sender'])
+			clock.increase()
+			comm.send(data, dest=request['sender'])
 		else:
 			with self.deffered_lock:
 				self.deffered.append(request['sender'])
@@ -105,23 +108,20 @@ class ConditionalVariable(object):
 			condvars[self.tag] = self
 			globals()['condvar_num'] += 1
 
-		self.conditional = threading.Conditional()
+		self.conditional = threading.Condition()
 		self.is_waiting = False
 
 	def wait(self, mutex):
-		mutex.unlock()
-		self.conditional.acquire()
 		self.is_waiting = True
+		self.conditional.acquire()
+		mutex.unlock()
 		self.conditional.wait()
 		self.conditional.release()
 		mutex.lock()
 
-	def notify(slef):
+	def notify(self):
 		data = {'type': 'conditional_notify', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
-		with comm_lock:
-			for i in range(comm.Get_size()):
-				if i != rank:
-					comm.send(data, dest=i)
+		multicast(data, ommit=[rank])
 
 	def on_notify(self):
 		self.conditional.acquire()
@@ -130,33 +130,55 @@ class ConditionalVariable(object):
 			self.is_waiting = False
 		self.conditional.release()
 
+
 ###########################################################
 ###	receiving thread
 ###########################################################
 
 def __receive_thread():
+	exit_counter = 0
 	run = True
 	while run:
 		data = comm.recv(source=MPI.ANY_SOURCE)
 		clock.increase(data['timestamp'])
 		#print "recv", rank, clock.value(), data
 		
-		if data['type'].startswith('mutex'):
-			with mutexes_lock:
-				if not (data['tag'] in mutexes):
-					reply = {'type': 'mutex_reply', 'tag': data['tag'], 'timestamp': clock.value(), 'sender': rank}
-					with comm_lock:
-						comm.send(reply, dest=data['sender'])
-				elif data['type'] == 'mutex_lock':
-					mutexes[data['tag']].on_request(data)
-				elif data['type'] == 'mutex_reply':
-					mutexes[data['tag']].on_reply()
+		if data['type'].startswith('mutex_'):
+			process_mutex_message(data)
+		
+		elif data['type'].startswith('conditional_'):
+			#print "recv", rank, clock.value(), data
+			process_conditional_message(data)
+		
 		elif data['type'] == "exit":
-			run = False
+			exit_counter += 1
+			if exit_counter == comm.Get_size():
+				run = False
 
-t = threading.Thread(target=__receive_thread)
-t.start()
+
+def process_mutex_message(msg):
+	with mutexes_lock:
+		if not (msg['tag'] in mutexes):
+			reply = {'type': 'mutex_reply', 'tag': msg['tag'], 'timestamp': clock.value(), 'sender': rank}
+			comm.send(reply, dest=msg['sender'])
+		
+		elif msg['type'] == 'mutex_lock':
+			mutexes[msg['tag']].on_request(msg)
+		
+		elif msg['type'] == 'mutex_reply':
+			mutexes[msg['tag']].on_reply()
+
+def process_conditional_message(msg):
+	with condvar_lock:
+		if msg['tag'] in condvars:
+			if msg['type'] == 'conditional_notify':
+				condvars[msg['tag']].on_notify()
+
 
 
 def finalize():
-	comm.send({'type': 'exit', 'timestamp': clock.value()}, dest=rank)
+	multicast({'type': 'exit', 'timestamp': clock.value()})
+
+
+t = threading.Thread(target=__receive_thread)
+t.start()
