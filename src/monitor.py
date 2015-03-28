@@ -20,8 +20,10 @@ mutexes = {}
 mutex_num = 0
 
 class Mutex(object):
+	""" Distributed mutex, implementation of Ricart-Agrawala algorithm
+	"""
+
 	def __init__(self):
-		self.interested_lock = threading.Lock()
 		self.interested = False
 		self.replies_condition = threading.Condition()
 		self.replies_number_lock = threading.Lock()
@@ -65,6 +67,8 @@ class Mutex(object):
 				self.replies_number = 0
 
 	def on_request(self, request):
+		""" action invoked by receiving thread when lock request received
+		"""
 		if (not self.interested) or (clock.value() > request['timestamp']) or (request['sender'] == rank):
 			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
 			with comm_lock:
@@ -75,6 +79,8 @@ class Mutex(object):
 
 
 	def on_reply(self):
+		""" action when receiving thread receives reply message
+		"""
 		with self.replies_number_lock:
 			self.replies_number += 1
 			if self.replies_number == (comm.Get_size() - 1):
@@ -125,7 +131,7 @@ class ConditionalVariable(object):
 		self.conditional.release()
 
 ###########################################################
-###	receiving  thread
+###	receiving thread
 ###########################################################
 
 def __receive_thread():
