@@ -20,7 +20,7 @@ mutexes = {}
 mutex_num = 0
 
 class Mutex(object):
-	""" Distributed mutex, implementation of Ricart-Agrawal algorithm
+	""" Distributed mutex, implementation of Ricart-Agrawala algorithm
 	"""
 
 	def __init__(self):
