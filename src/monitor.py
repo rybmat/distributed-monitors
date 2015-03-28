@@ -24,7 +24,6 @@ class Mutex(object):
 	"""
 
 	def __init__(self):
-		self.interested_lock = threading.Lock()
 		self.interested = False
 		self.replies_condition = threading.Condition()
 		self.replies_number_lock = threading.Lock()
@@ -40,8 +39,7 @@ class Mutex(object):
 
 
 	def lock(self):
-		with self.interested_lock:
-			self.interested = True
+		self.interested = True
 		
 		data = {'type': 'mutex_lock', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
 		with comm_lock:
@@ -55,31 +53,29 @@ class Mutex(object):
 
 
 	def unlock(self):
-		with self.interested_lock:
-			if self.interested:
-				with self.deffered_lock:
-					self.interested = False	
-					data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
-					
-					with comm_lock:
-						for d in self.deffered:
-							comm.send(data, dest=d)
-					self.deffered = []
+		if self.interested:
+			with self.deffered_lock:
+				self.interested = False	
+				data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+				
+				with comm_lock:
+					for d in self.deffered:
+						comm.send(data, dest=d)
+				self.deffered = []
 
-				with self.replies_number_lock:
-					self.replies_number = 0
+			with self.replies_number_lock:
+				self.replies_number = 0
 
 	def on_request(self, request):
 		""" action invoked by receiving thread when lock request received
 		"""
-		with self.interested_lock:
-			if (not self.interested) or (clock.value() > request['timestamp']) or (request['sender'] == rank):
-				data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
-				with comm_lock:
-					comm.send(data, dest=request['sender'])
-			else:
-				with self.deffered_lock:
-					self.deffered.append(request['sender'])
+		if (not self.interested) or (clock.value() > request['timestamp']) or (request['sender'] == rank):
+			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+			with comm_lock:
+				comm.send(data, dest=request['sender'])
+		else:
+			with self.deffered_lock:
+				self.deffered.append(request['sender'])
 
 
 	def on_reply(self):
