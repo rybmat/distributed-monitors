@@ -1,4 +1,5 @@
 import threading
+from contextlib import contextmanager
 
 from mpi4py import MPI
 from pprint import pprint
@@ -12,6 +13,8 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 def multicast(data, to=None, ommit=tuple()):
+	""" multicasts data to "to" list of ranks ommmiting "ommit" iterable of ranks
+	"""
 	if to is None:
 		to = range(comm.Get_size())
 	
@@ -26,14 +29,14 @@ def multicast(data, to=None, ommit=tuple()):
 
 mutexes_lock = threading.Lock()
 mutexes = {}
-mutex_num = 0
 
 class Mutex(object):
 	""" Distributed mutex, implementation of Ricart-Agrawala algorithm
 	"""
 
-	def __init__(self):
+	def __init__(self, tag):
 		self.interested = False
+		self.in_critical = False
 		self.replies_condition = threading.Condition()
 		self.replies_number_lock = threading.Lock()
 		self.replies_number = 0
@@ -42,10 +45,8 @@ class Mutex(object):
 		self.deffered = []
 
 		with mutexes_lock:
-			self.tag = globals()['mutex_num']
+			self.tag = tag
 			mutexes[self.tag] = self
-			globals()['mutex_num'] += 1
-
 
 	def lock(self):
 		self.interested = True
@@ -56,12 +57,14 @@ class Mutex(object):
 		self.replies_condition.acquire()
 		self.replies_condition.wait()
 		self.replies_condition.release()
-
+		self.in_critical = True
+		print "critical section", rank
 
 	def unlock(self):
 		if self.interested:
 			with self.deffered_lock:
-				self.interested = False	
+				self.interested, self.in_critical = False, False	
+				print "out"
 				data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
 				multicast(data, to=self.deffered)
 				self.deffered = []
@@ -72,14 +75,13 @@ class Mutex(object):
 	def on_request(self, request):
 		""" action invoked by receiving thread when lock request received
 		"""
-		if (not self.interested) or (clock.value() > request['timestamp']):
+		if (not self.interested) or (not self.in_critical and rank > request['sender']):
 			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
 			clock.increase()
 			comm.send(data, dest=request['sender'])
 		else:
 			with self.deffered_lock:
 				self.deffered.append(request['sender'])
-
 
 	def on_reply(self):
 		""" action when receiving thread receives reply message
@@ -98,15 +100,13 @@ class Mutex(object):
 
 condvar_lock = threading.Lock()
 condvars = {}
-condvar_num = 0
 
 class ConditionalVariable(object):
 
-	def __init__(self):
+	def __init__(self, tag):
 		with condvar_lock:
-			self.tag = globals()['condvar_num']
+			self.tag = tag
 			condvars[self.tag] = self
-			globals()['condvar_num'] += 1
 
 		self.conditional = threading.Condition()
 		self.is_waiting = False
@@ -132,6 +132,89 @@ class ConditionalVariable(object):
 
 
 ###########################################################
+###	Resource
+###########################################################
+
+resources_lock = threading.Lock()
+resources = {}
+
+class Resource(object):
+
+	def __init__(self, obj, tag, mutex=None, master=0):
+		self.tag = tag
+		self.master = master
+		self.obj_lock = threading.Lock()
+		self.obj = obj
+
+		self.conditional = threading.Condition()
+		
+		if mutex == "auto":
+			self.mutex = Mutex("resource_" + self.tag + "_lock")
+		else:
+			self.mutex = mutex
+
+		with resources_lock:
+			if self.tag not in resources:
+				resources[self.tag] = self
+
+	def __pull(self):
+		if self.master != rank:
+			data = {'type': 'resource_pull', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+			comm.send(data, dest=self.master)
+			
+			self.conditional.acquire()
+			self.conditional.wait()
+			self.conditional.release()
+
+	def __push(self):
+		if self.master != rank:
+			with self.obj_lock:
+				data = {'type': 'resource_push', 'tag': self.tag, 'obj': self.obj, 'timestamp': clock.value(), 'sender': rank}
+				comm.send(data, dest=self.master)
+
+			self.conditional.acquire()
+			self.conditional.wait()
+			self.conditional.release()
+
+	def __enter__(self):
+		if self.mutex:
+			self.mutex.lock()
+		self.__pull()
+		with self.obj_lock:
+			res = self.obj
+		return res
+
+	def __exit__(self, type, value, tb):
+		self.__push()
+		if self.mutex:
+			self.mutex.unlock()
+
+	def on_pull(self, msg):
+		""" action invoked by receiving thread when pull request """
+		with self.obj_lock:
+			data = {'type': 'resource_reply_pull', 'tag': self.tag, 'obj': self.obj, 'timestamp': clock.value(), 'sender': rank}
+			comm.send(data, dest=msg['sender'])
+
+	def on_push(self, msg):
+		""" action invoked by receiving thread when push request (only in master process) """
+		with self.obj_lock:
+			self.obj = msg['obj']
+		data = {'type': 'resource_reply_push', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+		comm.send(data, dest=msg['sender'])
+
+	def on_reply(self, msg):
+		""" invoked by receiving thread when reply to pull or push """
+		if msg['type'] == 'resource_reply_pull' and msg['obj']:
+			with self.obj_lock:
+				#print "rpl", rank, msg
+				self.obj = msg['obj']
+
+		self.conditional.acquire()
+		self.conditional.notify()
+		self.conditional.release()
+
+
+###########################################################
 ###	receiving thread
 ###########################################################
 
@@ -140,21 +223,24 @@ def __receive_thread():
 	run = True
 	while run:
 		data = comm.recv(source=MPI.ANY_SOURCE)
-		clock.increase(data['timestamp'])
+		
 		#print "recv", rank, clock.value(), data
 		
 		if data['type'].startswith('mutex_'):
 			process_mutex_message(data)
 		
 		elif data['type'].startswith('conditional_'):
-			#print "recv", rank, clock.value(), data
 			process_conditional_message(data)
+
+		elif data['type'].startswith('resource_'):
+			process_resource_message(data)
 		
 		elif data['type'] == "exit":
 			exit_counter += 1
 			if exit_counter == comm.Get_size():
 				run = False
 
+		clock.increase(data['timestamp'])
 
 def process_mutex_message(msg):
 	with mutexes_lock:
@@ -174,7 +260,23 @@ def process_conditional_message(msg):
 			if msg['type'] == 'conditional_notify':
 				condvars[msg['tag']].on_notify()
 
+def process_resource_message(msg):
+	#print "recv", rank, msg
+	with resources_lock:
+		if msg['tag'] not in resources:
+			reply = {'type': 'resource_replay', 'tag': msg['tag'], 'timestamp': clock.value(), 'sender': rank}
+			comm.send(reply, dest=msg['sender'])
 
+		elif msg['type'] == 'resource_pull':
+			resources[msg['tag']].on_pull(msg)
+
+		elif msg['type'] == 'resource_push':
+			resources[msg['tag']].on_push(msg)
+
+		elif msg['type'].startswith('resource_reply'):
+			resources[msg['tag']].on_reply(msg)
+
+###########################################################
 
 def finalize():
 	multicast({'type': 'exit', 'timestamp': clock.value()})
