@@ -8,12 +8,14 @@ from __clock import Clock
 
 from Queue import Queue
 
-clock = Clock()
+
 
 comm_lock = threading.Lock()
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
+
+clock = Clock(size=size, rank=rank)
 
 def send(data, dest):
 	clock.increase()
@@ -38,8 +40,9 @@ def multicast(data, to=None, ommit=tuple()):
 				comm.send(data, dest=i)
 
 def receive(source=MPI.ANY_SOURCE):
+	clock.increase()
 	data = comm.recv(source=MPI.ANY_SOURCE)
-	clock.increase(data['timestamp'])
+	clock.merge(data['timestamp'])
 	return data
 
 ###########################################################
@@ -92,7 +95,6 @@ class Mutex(object):
 					data = {'type': 'mutex_reply', 'tag': self.tag}
 					multicast(data, to=self.deffered)
 					self.deffered = []
-
 
 			with self.replies_number_lock:
 				self.replies_number = 0
