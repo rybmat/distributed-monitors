@@ -17,6 +17,8 @@ size = comm.Get_size()
 
 def send(data, dest):
 	clock.increase()
+	data['timestamp'] = clock.value()
+	data['sender'] = rank
 	with comm_lock:
 		comm.send(data, dest=dest)
 
@@ -27,10 +29,18 @@ def multicast(data, to=None, ommit=tuple()):
 		to = range(size)
 	
 	clock.increase()
+	data['timestamp'] = clock.value()
+	data['sender'] = rank
+
 	with comm_lock:
 		for i in to:
 			if i not in ommit:
 				comm.send(data, dest=i)
+
+def receive(source=MPI.ANY_SOURCE):
+	data = comm.recv(source=MPI.ANY_SOURCE)
+	clock.increase(data['timestamp'])
+	return data
 
 ###########################################################
 ###	Mutex
@@ -62,7 +72,7 @@ class Mutex(object):
 		with self.cr_lock:
 			self.interested = True
 		
-		data = {'type': 'mutex_lock', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+		data = {'type': 'mutex_lock', 'tag': self.tag}
 		multicast(data)
 
 		self.replies_condition.acquire()
@@ -79,7 +89,7 @@ class Mutex(object):
 				with self.cr_lock:
 					self.interested, self.in_critical = False, False	
 				
-					data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+					data = {'type': 'mutex_reply', 'tag': self.tag}
 					multicast(data, to=self.deffered)
 					self.deffered = []
 
@@ -95,8 +105,7 @@ class Mutex(object):
 				with self.deffered_lock:
 			 		self.deffered.append(request['sender'])
 			else:
-				data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
-				clock.increase()
+				data = {'type': 'mutex_reply', 'tag': self.tag}
 				send(data, dest=request['sender'])
 
 	def on_reply(self):
@@ -136,7 +145,7 @@ class ConditionalVariable(object):
 		mutex.lock()
 
 	def notify(self):
-		data = {'type': 'conditional_notify', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+		data = {'type': 'conditional_notify', 'tag': self.tag}
 		multicast(data, ommit=[rank])
 
 	def on_notify(self):
@@ -175,7 +184,7 @@ class Resource(object):
 
 	def __pull(self):
 		if self.master != rank:
-			data = {'type': 'resource_pull', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+			data = {'type': 'resource_pull', 'tag': self.tag}
 			send(data, dest=self.master)
 			
 			self.conditional.acquire()
@@ -238,7 +247,7 @@ def __receive_thread():
 	exit_counter = 0
 	run = True
 	while run:
-		data = comm.recv(source=MPI.ANY_SOURCE)
+		data = receive(source=MPI.ANY_SOURCE)
 		
 		#print "recv", rank, clock.value(), data
 		
@@ -255,8 +264,6 @@ def __receive_thread():
 			exit_counter += 1
 			if exit_counter == size:
 				run = False
-
-		clock.increase(data['timestamp'])
 
 def process_mutex_message(msg):
 	with mutexes_lock:
