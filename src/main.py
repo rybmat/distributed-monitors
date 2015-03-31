@@ -1,6 +1,18 @@
 from monitor import *
 import time
 
+mutex = Mutex('m')
+
+mutex.lock()
+print rank, 'aaa'
+mutex.unlock()
+
+mutex.lock()
+print rank, 'bbb'
+mutex.unlock()
+
+#####################
+
 # mutex = Mutex('m')
 # cv = ConditionalVariable('c')
 
@@ -17,15 +29,15 @@ import time
 
 ##################
 
-obj = {rank: 'a'}
-res = Resource(obj, 'r', "auto")
+# obj = {rank: 'a'}
+# res = Resource(obj, 'r', "auto")
 
-with res as r:
-	r[rank] = 'b'
-	#print rank, r
-#time.sleep(5)
-with res as r:
-	print rank, r
+# with res as r:
+# 	r[rank] = 'b'
+# 	#print rank, r
+# time.sleep(5)
+# with res as r:
+# 	print rank, r
 
 
 finalize()
