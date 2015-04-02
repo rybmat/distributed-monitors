@@ -9,8 +9,6 @@ from __clock import Clock
 from Queue import Queue
 
 
-
-comm_lock = threading.Lock()
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
@@ -18,11 +16,10 @@ size = comm.Get_size()
 clock = Clock()
 
 def send(data, dest):
-	clock.increase()
+	#clock.increase()
 	data['timestamp'] = clock.value()
 	data['sender'] = rank
-	with comm_lock:
-		comm.send(data, dest=dest)
+	comm.send(data, dest=dest)
 
 def multicast(data, to=None, ommit=tuple()):
 	""" multicasts data to "to" list of ranks ommmiting "ommit" iterable of ranks
@@ -30,26 +27,28 @@ def multicast(data, to=None, ommit=tuple()):
 	if to is None:
 		to = range(size)
 	
-	clock.increase()
 	data['timestamp'] = clock.value()
 	data['sender'] = rank
 
-	with comm_lock:
-		for i in to:
-			if i not in ommit:
-				comm.send(data, dest=i)
+	for i in to:
+		if i not in ommit:
+			comm.send(data, dest=i)
 
 def receive(source=MPI.ANY_SOURCE):
 	data = comm.recv(source=MPI.ANY_SOURCE)
-	clock.increase(data['timestamp'])
 	return data
 
 ###########################################################
 ###	Mutex
 ###########################################################
-
 mutexes_lock = threading.Lock()
 mutexes = {}
+
+def GetMutex(tag):
+	with mutexes_lock:
+		if tag not in mutexes:
+			mutexes[tag] = Mutex(tag)
+		return mutexes[tag]
 
 class Mutex(object):
 	""" Distributed mutex, implementation of Ricart-Agrawala algorithm
@@ -62,16 +61,16 @@ class Mutex(object):
 		self.mutex = threading.Lock()
 		self.condition = threading.Condition(self.mutex)
 
-		self.replies_number = 0	
+		self.replies = [0 for i in range(size)]
 		self.deffered = set()
 
-		with mutexes_lock:
-			self.tag = tag
-			mutexes[self.tag] = self
+		#with mutexes_lock:
+		self.tag = tag
+		mutexes[self.tag] = self
 
 	def lock(self):
 		self.condition.acquire()
-
+		clock.increase()					###############################
 		self.interested = True
 		data = {'type': 'mutex_lock', 'tag': self.tag}
 		multicast(data)		
@@ -93,7 +92,6 @@ class Mutex(object):
 			multicast(data, to=self.deffered)
 			self.deffered = set()
 
-			self.replies_number = 0
 		self.condition.release()
 
 	def on_request(self, request):
@@ -109,14 +107,15 @@ class Mutex(object):
 
 		self.condition.release()
 
-	def on_reply(self):
+	def on_reply(self, msg):
 		""" action when receiving thread receives reply message
 		"""
 		self.condition.acquire()
 		
-		self.replies_number += 1
-		if self.replies_number == size:
+		self.replies[msg['sender']] = True
+		if False not in self.replies:
 			self.condition.notify()
+			self.replies = [False for i in range(size)]
 
 		self.condition.release()
 
@@ -145,12 +144,11 @@ class ConditionalVariable(object):
 		self.is_waiting = False
 
 	def wait(self, mutex):
-		mutex.unlock()
 		self.conditional.acquire()
+		mutex.unlock()
 		self.is_waiting = True
 		self.conditional.wait()
 		self.conditional.release()
-		mutex.lock()
 
 	def notify(self):
 		data = {'type': 'conditional_notify', 'tag': self.tag}
@@ -274,16 +272,18 @@ def __receive_thread():
 				run = False
 
 def process_mutex_message(msg):
-	with mutexes_lock:
-		if not (msg['tag'] in mutexes):
-			reply = {'type': 'mutex_reply', 'tag': msg['tag'], 'timestamp': clock.value(), 'sender': rank}
-			send(reply, dest=msg['sender'])
+	# with mutexes_lock:
+	# 	#print "recv", rank, msg
+	# 	if not (msg['tag'] in mutexes):
+	# 		reply = {'type': 'mutex_reply', 'tag': msg['tag'], 'timestamp': clock.value(), 'sender': rank}
+	# 		send(reply, dest=msg['sender'])
 		
-		elif msg['type'] == 'mutex_lock':
-			mutexes[msg['tag']].on_request(msg)
-		
-		elif msg['type'] == 'mutex_reply':
-			mutexes[msg['tag']].on_reply()
+	mutex = GetMutex(msg['tag'])
+	if msg['type'] == 'mutex_lock':
+		mutex.on_request(msg)
+	
+	elif msg['type'] == 'mutex_reply':
+		mutex.on_reply(msg)
 
 def process_conditional_message(msg):
 	with condvar_lock:
