@@ -57,7 +57,7 @@ class Mutex(object):
 		self.mutex = threading.Lock()
 		self.condition = threading.Condition(self.mutex)
 
-		self.replies = [0 for i in range(size)]
+		self.replies = [False for i in range(size)]
 		self.deffered = set()
 
 		#with mutexes_lock:
@@ -81,7 +81,6 @@ class Mutex(object):
 
 		if self.in_critical:
 			print "out", rank
-			clock.increase()
 			self.interested, self.in_critical = False, False	
 		
 			data = {'type': 'mutex_reply', 'tag': self.tag}
@@ -110,8 +109,8 @@ class Mutex(object):
 		
 		self.replies[msg['sender']] = True
 		if False not in self.replies:
-			self.condition.notify()
 			self.replies = [False for i in range(size)]
+			self.condition.notify()
 
 		self.condition.release()
 
@@ -165,78 +164,86 @@ class ConditionalVariable(object):
 resources_lock = threading.Lock()
 resources = {}
 
+def GetResource(obj, tag, mutex=None, master=0):
+	with resources_lock:
+		if tag not in resources:
+			resources[tag] = Resource(obj, tag, mutex, master)
+		return resources[tag]
+
 class Resource(object):
 
 	def __init__(self, obj, tag, mutex=None, master=0):
+		"""mutex is tag of mutex, not object itself"""
 		self.tag = tag
 		self.master = master
-		self.obj_lock = threading.Lock()
 		self.obj = obj
 
 		self.conditional = threading.Condition()
-		
-		if mutex == "auto":
-			self.mutex = Mutex("resource_" + self.tag + "_lock")
-		else:
-			self.mutex = mutex
 
-		with resources_lock:
-			if self.tag not in resources:
-				resources[self.tag] = self
+		if mutex == "auto":
+			self.mutex = GetMutex("resource_" + self.tag + "_lock")
+		elif mutex is not None:
+			self.mutex = GetMutex(mutex)
+		else: 
+			self.mutex = None
+
+		resources[self.tag] = self
 
 	def __pull(self):
+		self.conditional.acquire()
 		if self.master != rank:
-			data = {'type': 'resource_pull', 'tag': self.tag}
+			data = {'type': 'resource_pull', 'tag': self.tag, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 			send(data, dest=self.master)
-			
-			self.conditional.acquire()
 			self.conditional.wait()
-			self.conditional.release()
+		self.conditional.release()
 
 	def __push(self):
+		self.conditional.acquire()
 		if self.master != rank:
-			with self.obj_lock:
-				data = {'type': 'resource_push', 'tag': self.tag, 'obj': self.obj, 'timestamp': clock.value(), 'sender': rank}
-				send(data, dest=self.master)
-
-			self.conditional.acquire()
+			data = {'type': 'resource_push', 'tag': self.tag, 'obj': self.obj, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
+			send(data, dest=self.master)
+			
 			self.conditional.wait()
-			self.conditional.release()
+		self.conditional.release()
 
 	def __enter__(self):
+		self.conditional.acquire()
 		if self.mutex:
 			self.mutex.lock()
 		self.__pull()
-		with self.obj_lock:
-			res = self.obj
+		res = self.obj
+		self.conditional.release()
 		return res
 
 	def __exit__(self, type, value, tb):
+		self.conditional.acquire()
 		self.__push()
 		if self.mutex:
 			self.mutex.unlock()
+		self.conditional.release()
 
 	def on_pull(self, msg):
 		""" action invoked by receiving thread when pull request """
-		with self.obj_lock:
-			data = {'type': 'resource_reply_pull', 'tag': self.tag, 'obj': self.obj, 'timestamp': clock.value(), 'sender': rank}
-			send(data, dest=msg['sender'])
+		self.conditional.acquire()
+		data = {'type': 'resource_reply_pull', 'tag': self.tag, 'obj': self.obj, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
+		send(data, dest=msg['sender'])
+		self.conditional.release()
 
 	def on_push(self, msg):
 		""" action invoked by receiving thread when push request (only in master process) """
-		with self.obj_lock:
-			self.obj = msg['obj']
-		data = {'type': 'resource_reply_push', 'tag': self.tag, 'timestamp': clock.value(), 'sender': rank}
+		self.conditional.acquire()
+		self.obj = msg['obj']
+		data = {'type': 'resource_reply_push', 'tag': self.tag, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 		send(data, dest=msg['sender'])
+		self.conditional.release()
 
 	def on_reply(self, msg):
 		""" invoked by receiving thread when reply to pull or push """
-		if msg['type'] == 'resource_reply_pull' and msg['obj']:
-			with self.obj_lock:
-				#print "rpl", rank, msg
-				self.obj = msg['obj']
-
 		self.conditional.acquire()
+		if msg['type'] == 'resource_reply_pull' and msg['obj']:
+			#print "rpl", rank, msg
+			self.obj = msg['obj']
+		
 		self.conditional.notify()
 		self.conditional.release()
 
@@ -268,12 +275,6 @@ def __receive_thread():
 				run = False
 
 def process_mutex_message(msg):
-	# with mutexes_lock:
-	# 	#print "recv", rank, msg
-	# 	if not (msg['tag'] in mutexes):
-	# 		reply = {'type': 'mutex_reply', 'tag': msg['tag'], 'timestamp': clock.value(), 'sender': rank}
-	# 		send(reply, dest=msg['sender'])
-		
 	mutex = GetMutex(msg['tag'])
 	if msg['type'] == 'mutex_lock':
 		mutex.on_request(msg)
@@ -289,19 +290,15 @@ def process_conditional_message(msg):
 
 def process_resource_message(msg):
 	#print "recv", rank, msg
-	with resources_lock:
-		if msg['tag'] not in resources:
-			reply = {'type': 'resource_replay', 'tag': msg['tag'], 'timestamp': clock.value(), 'sender': rank}
-			send(reply, dest=msg['sender'])
+	res = GetResource(None, msg['tag'], msg['mutex'], msg['master'])
+	if msg['type'] == 'resource_pull':
+		res.on_pull(msg)
 
-		elif msg['type'] == 'resource_pull':
-			resources[msg['tag']].on_pull(msg)
+	elif msg['type'] == 'resource_push':
+		res.on_push(msg)
 
-		elif msg['type'] == 'resource_push':
-			resources[msg['tag']].on_push(msg)
-
-		elif msg['type'].startswith('resource_reply'):
-			resources[msg['tag']].on_reply(msg)
+	elif msg['type'].startswith('resource_reply'):
+		res.on_reply(msg)
 
 ###########################################################
 
