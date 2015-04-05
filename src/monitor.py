@@ -16,7 +16,6 @@ size = comm.Get_size()
 clock = Clock()
 
 def send(data, dest):
-	#clock.increase()
 	data['timestamp'] = clock.value()
 	data['sender'] = rank
 	comm.send(data, dest=dest)
@@ -26,13 +25,10 @@ def multicast(data, to=None, ommit=tuple()):
 	"""
 	if to is None:
 		to = range(size)
-	
-	data['timestamp'] = clock.value()
-	data['sender'] = rank
 
 	for i in to:
 		if i not in ommit:
-			comm.send(data, dest=i)
+			send(data, dest=i)
 
 def receive(source=MPI.ANY_SOURCE):
 	data = comm.recv(source=MPI.ANY_SOURCE)
@@ -85,7 +81,7 @@ class Mutex(object):
 
 		if self.in_critical:
 			print "out", rank
-		
+			clock.increase()
 			self.interested, self.in_critical = False, False	
 		
 			data = {'type': 'mutex_reply', 'tag': self.tag}

@@ -1,19 +1,19 @@
 from monitor import *
 import time
 
-# mutex = GetMutex('m')
+mutex = GetMutex('m')
 
-# mutex.lock()
-# print rank, 'aaa'
-# mutex.unlock()
+mutex.lock()
+print rank, 'aaa'
+mutex.unlock()
 
-# mutex.lock()
-# print rank, 'bbb'
-# mutex.unlock()
+mutex.lock()
+print rank, 'bbb'
+mutex.unlock()
 
-# mutex.lock()
-# print rank, 'ccc'
-# mutex.unlock()
+mutex.lock()
+print rank, 'ccc'
+mutex.unlock()
 
 #####################
 # Fix this example
@@ -34,15 +34,15 @@ import time
 
 ##################
 
-obj = {rank: 'a'}
-res = Resource(obj, 'r', "auto")
+# obj = {rank: 'a'}
+# res = Resource(obj, 'r', "auto")
 
-with res as r:
-	r[rank] = 'b'
-	#print rank, r
-time.sleep(5)
-with res as r:
-	print rank, r
+# with res as r:
+# 	r[rank] = 'b'
+# 	#print rank, r
+# time.sleep(5)
+# with res as r:
+# 	print rank, r
 
 
 finalize()
