@@ -60,14 +60,13 @@ class Mutex(object):
 		self.replies = [False for i in range(size)]
 		self.deffered = set()
 
-		#with mutexes_lock:
 		self.tag = tag
 		mutexes[self.tag] = self
 
 	def lock(self):
 		self.condition.acquire()
-		clock.increase()					###############################
 		self.interested = True
+		clock.increase()					###############################
 		data = {'type': 'mutex_lock', 'tag': self.tag}
 		multicast(data)		
 		self.condition.wait()
@@ -240,7 +239,7 @@ class Resource(object):
 	def on_reply(self, msg):
 		""" invoked by receiving thread when reply to pull or push """
 		self.conditional.acquire()
-		if msg['type'] == 'resource_reply_pull' and msg['obj']:
+		if msg['type'] == 'resource_reply_pull' and msg['obj'] is not None:
 			#print "rpl", rank, msg
 			self.obj = msg['obj']
 		
