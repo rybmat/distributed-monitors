@@ -15,9 +15,15 @@ size = comm.Get_size()
 
 clock = Clock()
 
+log_file = open("logs/log_" + str(rank), 'w')
+
+def log(txt):
+	log_file.write(txt + '\n')
+
 def send(data, dest):
 	data['timestamp'] = clock.value()
 	data['sender'] = rank
+	log("send to " + str(dest) + ", " + str(data))
 	comm.send(data, dest=dest)
 
 def multicast(data, to=None, ommit=tuple()):
@@ -72,14 +78,17 @@ class Mutex(object):
 		self.condition.wait()
 		self.in_critical = True
 		
-		self.condition.release()
 		print "critical section", rank
+		log("critical section")
+		
+		self.condition.release()
 
 	def unlock(self):
 		self.condition.acquire()
 
 		if self.in_critical:
 			print "out", rank
+			log("out")
 			self.interested, self.in_critical = False, False	
 		
 			data = {'type': 'mutex_reply', 'tag': self.tag}
@@ -92,9 +101,10 @@ class Mutex(object):
 		""" action invoked by receiving thread when lock request received
 		"""
 		self.condition.acquire()
-
+		log("critical:"+str(self.in_critical) + " interested:" + str(self.interested) + " self.clk:" + str(clock.value()) + str(request))
 		if self.in_critical or (self.interested and self.__higher_priority(request)):
 	 		self.deffered.add(request['sender'])
+	 		log("deffered:" + str(request['sender']))
 		else:
 			data = {'type': 'mutex_reply', 'tag': self.tag}
 			send(data, dest=request['sender'])
@@ -108,6 +118,7 @@ class Mutex(object):
 		
 		self.replies[msg['sender']] = True
 		if False not in self.replies:
+			log(str(self.replies))
 			self.replies = [False for i in range(size)]
 			self.condition.notify()
 
@@ -256,7 +267,7 @@ def __receive_thread():
 	run = True
 	while run:
 		data = receive(source=MPI.ANY_SOURCE)
-		
+		log("rcv " + str(data))
 		#print "recv", rank, clock.value(), data
 		
 		if data['type'].startswith('mutex_'):
@@ -271,6 +282,7 @@ def __receive_thread():
 		elif data['type'] == "exit":
 			exit_counter += 1
 			if exit_counter == size:
+				log_file.close()
 				run = False
 
 def process_mutex_message(msg):
