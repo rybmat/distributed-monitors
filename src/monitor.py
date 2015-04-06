@@ -16,12 +16,14 @@ size = comm.Get_size()
 clock = Clock()
 
 log_file = open("logs/log_" + str(rank), 'w')
+log_file.close()
 
 def log(txt):
-	log_file.write(txt + '\n')
+	with open("logs/log_" + str(rank), 'a') as log_file:
+		log_file.write(txt + '\n')
+	
 
 def send(data, dest):
-	data['timestamp'] = clock.value()
 	data['sender'] = rank
 	log("send to " + str(dest) + ", " + str(data))
 	comm.send(data, dest=dest)
@@ -73,13 +75,10 @@ class Mutex(object):
 		self.condition.acquire()
 		self.interested = True
 		clock.increase()					###############################
-		data = {'type': 'mutex_lock', 'tag': self.tag}
+		self.request_clk = clock.value()
+		data = {'type': 'mutex_lock', 'tag': self.tag, 'timestamp': clock.value()}
 		multicast(data)		
 		self.condition.wait()
-		self.in_critical = True
-		
-		print "critical section", rank
-		log("critical section")
 		
 		self.condition.release()
 
@@ -90,8 +89,9 @@ class Mutex(object):
 			print "out", rank
 			log("out")
 			self.interested, self.in_critical = False, False	
-		
-			data = {'type': 'mutex_reply', 'tag': self.tag}
+			clock.increase()				###############################
+
+			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value()}
 			multicast(data, to=self.deffered)
 			self.deffered = set()
 
@@ -101,12 +101,16 @@ class Mutex(object):
 		""" action invoked by receiving thread when lock request received
 		"""
 		self.condition.acquire()
-		log("critical:"+str(self.in_critical) + " interested:" + str(self.interested) + " self.clk:" + str(clock.value()) + str(request))
+		clock.increase(request['timestamp'])	###############################
+		
+		log("critical:" + str(self.in_critical) + " interested:" + str(self.interested) + " self.clk:" + str(clock.value()) + str(request))
+		
 		if self.in_critical or (self.interested and self.__higher_priority(request)):
 	 		self.deffered.add(request['sender'])
-	 		log("deffered:" + str(request['sender']))
+	 		log("deffered:" + str(request['sender']) + " " + str(self.replies))
 		else:
-			data = {'type': 'mutex_reply', 'tag': self.tag}
+			clock.increase()			##########################
+			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value()}
 			send(data, dest=request['sender'])
 
 		self.condition.release()
@@ -119,16 +123,22 @@ class Mutex(object):
 		self.replies[msg['sender']] = True
 		if False not in self.replies:
 			log(str(self.replies))
+
+			self.in_critical = True
+			print "critical section", rank
+			log("critical section")
+
 			self.replies = [False for i in range(size)]
+			
 			self.condition.notify()
 
 		self.condition.release()
 
 	def __higher_priority(self, req):
-		if clock.value() == req['timestamp']:
+		if self.request_clk == req['timestamp']:
 			return rank < req['sender']
 		else:
-			return clock.value() < req['timestamp']
+			return self.request_clk < req['timestamp']
 
 
 ###########################################################
@@ -282,7 +292,6 @@ def __receive_thread():
 		elif data['type'] == "exit":
 			exit_counter += 1
 			if exit_counter == size:
-				log_file.close()
 				run = False
 
 def process_mutex_message(msg):
