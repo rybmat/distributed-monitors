@@ -193,7 +193,7 @@ def GetResource(obj, tag, mutex=None, master=0):
 
 class Resource(object):
 
-	def __init__(self, obj, tag, mutex=None, master=0):
+	def __init__(self, obj, tag, mutex="auto", master=0):
 		"""mutex is tag of mutex, not object itself"""
 		self.tag = tag
 		self.master = master
