@@ -26,7 +26,7 @@ def log(txt):
 
 def send(data, dest):
 	data['sender'] = rank
-	log("send to " + str(dest) + ", " + str(data))
+	# log("send to " + str(dest) + ", " + str(data))
 	comm.send(data, dest=dest)
 
 def multicast(data, to=None, ommit=tuple()):
