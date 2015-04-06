@@ -36,6 +36,7 @@ import time
 
 obj = {rank: 'a'}
 res = GetResource(obj, 'r', "auto")
+log("main: GetResource")
 with res as r:
 	r[rank] = 'b'
 	#print rank, r

@@ -15,13 +15,14 @@ size = comm.Get_size()
 
 clock = Clock()
 
-log_file = open("logs/log_" + str(rank), 'w')
-log_file.close()
+#log_file = open("logs/log_" + str(rank), 'w')
+#log_file.close()
 
 def log(txt):
 	with open("logs/log_" + str(rank), 'a') as log_file:
-		log_file.write(txt + '\n')
-	
+		# log_file.write(txt + '\n')
+		pass
+
 
 def send(data, dest):
 	data['sender'] = rank
@@ -103,11 +104,11 @@ class Mutex(object):
 		self.condition.acquire()
 		clock.increase(request['timestamp'])	###############################
 		
-		log("critical:" + str(self.in_critical) + " interested:" + str(self.interested) + " self.clk:" + str(clock.value()) + str(request))
+		#log("critical:" + str(self.in_critical) + " interested:" + str(self.interested) + " self.clk:" + str(clock.value()) + str(request))
 		
 		if self.in_critical or (self.interested and self.__higher_priority(request)):
 	 		self.deffered.add(request['sender'])
-	 		log("deffered:" + str(request['sender']) + " " + str(self.replies))
+	 	#	log("deffered:" + str(request['sender']) + " " + str(self.replies))
 		else:
 			clock.increase()			##########################
 			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value()}
@@ -126,7 +127,7 @@ class Mutex(object):
 
 			self.in_critical = True
 			print "critical section", rank
-			log("critical section")
+		#	log("critical section")
 
 			self.replies = [False for i in range(size)]
 			
@@ -211,6 +212,7 @@ class Resource(object):
 
 	def __pull(self):
 		self.conditional.acquire()
+	#	log("inside __pull")
 		if self.master != rank:
 			data = {'type': 'resource_pull', 'tag': self.tag, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 			send(data, dest=self.master)
@@ -219,6 +221,7 @@ class Resource(object):
 
 	def __push(self):
 		self.conditional.acquire()
+	#	log("inside __push")
 		if self.master != rank:
 			data = {'type': 'resource_push', 'tag': self.tag, 'obj': self.obj, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 			send(data, dest=self.master)
@@ -227,9 +230,10 @@ class Resource(object):
 		self.conditional.release()
 
 	def __enter__(self):
-		self.conditional.acquire()
+	#	log("inside enter")
 		if self.mutex:
 			self.mutex.lock()
+		self.conditional.acquire()
 		self.__pull()
 		res = self.obj
 		self.conditional.release()
@@ -237,6 +241,7 @@ class Resource(object):
 
 	def __exit__(self, type, value, tb):
 		self.conditional.acquire()
+	#	log("inside exit")
 		self.__push()
 		if self.mutex:
 			self.mutex.unlock()
@@ -245,6 +250,7 @@ class Resource(object):
 	def on_pull(self, msg):
 		""" action invoked by receiving thread when pull request """
 		self.conditional.acquire()
+	#	log("inside on_pull")
 		data = {'type': 'resource_reply_pull', 'tag': self.tag, 'obj': self.obj, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 		send(data, dest=msg['sender'])
 		self.conditional.release()
@@ -252,6 +258,7 @@ class Resource(object):
 	def on_push(self, msg):
 		""" action invoked by receiving thread when push request (only in master process) """
 		self.conditional.acquire()
+	#	log("inside on_push")
 		self.obj = msg['obj']
 		data = {'type': 'resource_reply_push', 'tag': self.tag, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 		send(data, dest=msg['sender'])
@@ -260,7 +267,9 @@ class Resource(object):
 	def on_reply(self, msg):
 		""" invoked by receiving thread when reply to pull or push """
 		self.conditional.acquire()
+	#	log("inside on_reply")
 		if msg['type'] == 'resource_reply_pull' and msg['obj'] is not None:
+			log("resource_reply_pull")
 			#print "rpl", rank, msg
 			self.obj = msg['obj']
 		
@@ -277,7 +286,7 @@ def __receive_thread():
 	run = True
 	while run:
 		data = receive(source=MPI.ANY_SOURCE)
-		log("rcv " + str(data))
+	#	log("rcv " + str(data))
 		#print "recv", rank, clock.value(), data
 		
 		if data['type'].startswith('mutex_'):
@@ -311,6 +320,7 @@ def process_conditional_message(msg):
 def process_resource_message(msg):
 	#print "recv", rank, msg
 	res = GetResource(None, msg['tag'], msg['mutex'], msg['master'])
+#	log("recv: GetResource, " + res.tag + " " + res.mutex.tag)
 	if msg['type'] == 'resource_pull':
 		res.on_pull(msg)
 
