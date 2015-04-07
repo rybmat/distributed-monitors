@@ -49,13 +49,13 @@ def receive(source=MPI.ANY_SOURCE):
 mutexes_lock = threading.Lock()
 mutexes = {}
 
-def GetMutex(tag):
+def Mutex(tag):
 	with mutexes_lock:
 		if tag not in mutexes:
-			mutexes[tag] = Mutex(tag)
+			mutexes[tag] = __Mutex(tag)
 		return mutexes[tag]
 
-class Mutex(object):
+class __Mutex(object):
 	""" Distributed mutex, implementation of Ricart-Agrawala algorithm
 	"""
 
@@ -164,6 +164,7 @@ class ConditionalVariable(object):
 		mutex.unlock()
 		self.is_waiting = True
 		self.conditional.wait()
+		mutex.lock()
 		self.conditional.release()
 
 	def notify(self):
@@ -185,13 +186,13 @@ class ConditionalVariable(object):
 resources_lock = threading.Lock()
 resources = {}
 
-def GetResource(obj, tag, mutex=None, master=0):
+def Resource(obj, tag, mutex=None, master=0):
 	with resources_lock:
 		if tag not in resources:
-			resources[tag] = Resource(obj, tag, mutex, master)
+			resources[tag] = __Resource(obj, tag, mutex, master)
 		return resources[tag]
 
-class Resource(object):
+class __Resource(object):
 
 	def __init__(self, obj, tag, mutex="auto", master=0):
 		"""mutex is tag of mutex, not object itself"""
@@ -202,9 +203,9 @@ class Resource(object):
 		self.conditional = threading.Condition()
 
 		if mutex == "auto":
-			self.mutex = GetMutex("resource_" + self.tag + "_lock")
+			self.mutex = Mutex("resource_" + self.tag + "_lock")
 		elif mutex is not None:
-			self.mutex = GetMutex(mutex)
+			self.mutex = Mutex(mutex)
 		else: 
 			self.mutex = None
 
@@ -304,7 +305,7 @@ def __receive_thread():
 				run = False
 
 def process_mutex_message(msg):
-	mutex = GetMutex(msg['tag'])
+	mutex = Mutex(msg['tag'])
 	if msg['type'] == 'mutex_lock':
 		mutex.on_request(msg)
 	
@@ -319,8 +320,8 @@ def process_conditional_message(msg):
 
 def process_resource_message(msg):
 	#print "recv", rank, msg
-	res = GetResource(None, msg['tag'], msg['mutex'], msg['master'])
-#	log("recv: GetResource, " + res.tag + " " + res.mutex.tag)
+	res = Resource(None, msg['tag'], msg['mutex'], msg['master'])
+#	log("recv: Resource, " + res.tag + " " + res.mutex.tag)
 	if msg['type'] == 'resource_pull':
 		res.on_pull(msg)
 

@@ -1,7 +1,7 @@
 from monitor import *
 import time
 
-# mutex = GetMutex('m')
+# mutex = Mutex('m')
 
 # mutex.lock()
 # print rank, 'aaa'
@@ -35,7 +35,7 @@ import time
 ##################
 
 obj = {rank: 'a'}
-res = GetResource(obj, 'r', "auto")
+res = Resource(obj, 'r', "auto")
 log("main: GetResource")
 with res as r:
 	r[rank] = 'b'
