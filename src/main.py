@@ -38,10 +38,12 @@ obj = {rank: 'a'}
 res = Resource(obj, 'r', "auto")
 
 with res as r:
+	time.sleep(1)
 	r[rank] = 'b'
 	#print rank, r
-time.sleep(5)
+#time.sleep(5)
 with res as r:
+	time.sleep(1)
 	print rank, r
 
 

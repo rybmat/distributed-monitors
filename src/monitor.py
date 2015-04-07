@@ -161,15 +161,19 @@ class ConditionalVariable(object):
 
 	def wait(self, mutex):
 		self.conditional.acquire()
+		#print rank, self.tag, "wait"
 		mutex.unlock()
 		self.is_waiting = True
 		self.conditional.wait()
+		#print rank, self.tag, "wake up"
 		mutex.lock()
+		#print rank, self.tag, "in critical"
 		self.conditional.release()
 
 	def notify(self):
 		data = {'type': 'conditional_notify', 'tag': self.tag}
 		multicast(data, ommit=[rank])
+		#print rank, self.tag, "notify"
 
 	def on_notify(self):
 		self.conditional.acquire()

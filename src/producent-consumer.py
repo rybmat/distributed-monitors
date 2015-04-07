@@ -13,15 +13,22 @@ class Buffer:
 		if self.buff[self.pop_pos] is not None:
 			result = self.buff[self.pop_pos]
 			self.buff[self.pop_pos] = None
+			#print rank, "pop ", result, " from ", self.pop_pos
+
 			self.pop_pos = (self.pop_pos + 1) % self.buff_size
+
+		#print rank, "pop ####status###", "pop", self.pop_pos, "push", self.push_pos, self.buff
 		return result
 
 	def push(self, value):
 		if self.buff[self.push_pos] is None:
+			#print rank, "push ", value, " to ", self.push_pos
 			self.buff[self.push_pos] = value
-			self.push_pos = (self.pop_pos + 1) % self.buff_size
+			self.push_pos = (self.push_pos + 1) % self.buff_size
+			#print rank, "push ####status###", "pop", self.pop_pos, "push", self.push_pos, self.buff
 			return True
 		else:
+			#print rank, "push ####status###", "pop", self.pop_pos, "push", self.push_pos, self.buff
 			return False
 
 
@@ -45,7 +52,6 @@ class BufferMonitor:
 
 			with self.buff as b:
 				result = b.pop()
-
 
 		self.producent_cond.notify()
 		self.mutex.unlock()
