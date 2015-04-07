@@ -36,7 +36,7 @@ import time
 
 obj = {rank: 'a'}
 res = Resource(obj, 'r', "auto")
-log("main: GetResource")
+
 with res as r:
 	r[rank] = 'b'
 	#print rank, r
