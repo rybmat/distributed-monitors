@@ -87,8 +87,8 @@ class __Mutex(object):
 		self.condition.acquire()
 
 		if self.in_critical:
-			print "out", rank
-			log("out")
+		#	print "out", rank
+		#	log("out")
 			self.interested, self.in_critical = False, False	
 			clock.increase()				###############################
 
@@ -126,7 +126,7 @@ class __Mutex(object):
 			log(str(self.replies))
 
 			self.in_critical = True
-			print "critical section", rank
+		#	print "critical section", rank
 		#	log("critical section")
 
 			self.replies = [False for i in range(size)]
