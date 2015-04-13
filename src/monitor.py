@@ -15,18 +15,9 @@ size = comm.Get_size()
 
 clock = Clock()
 
-#log_file = open("logs/log_" + str(rank), 'w')
-#log_file.close()
-
-def log(txt):
-	with open("logs/log_" + str(rank), 'a') as log_file:
-		# log_file.write(txt + '\n')
-		pass
-
 
 def send(data, dest):
 	data['sender'] = rank
-	# log("send to " + str(dest) + ", " + str(data))
 	comm.send(data, dest=dest)
 
 def multicast(data, to=None, ommit=tuple()):
@@ -75,7 +66,7 @@ class __Mutex(object):
 	def lock(self):
 		self.condition.acquire()
 		self.interested = True
-		clock.increase()					###############################
+		clock.increase()
 		self.request_clk = clock.value()
 		data = {'type': 'mutex_lock', 'tag': self.tag, 'timestamp': clock.value()}
 		multicast(data)		
@@ -87,10 +78,8 @@ class __Mutex(object):
 		self.condition.acquire()
 
 		if self.in_critical:
-		#	print "out", rank
-		#	log("out")
 			self.interested, self.in_critical = False, False	
-			clock.increase()				###############################
+			clock.increase()
 
 			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value()}
 			multicast(data, to=self.deffered)
@@ -102,15 +91,12 @@ class __Mutex(object):
 		""" action invoked by receiving thread when lock request received
 		"""
 		self.condition.acquire()
-		clock.increase(request['timestamp'])	###############################
-		
-		#log("critical:" + str(self.in_critical) + " interested:" + str(self.interested) + " self.clk:" + str(clock.value()) + str(request))
+		clock.increase(request['timestamp'])
 		
 		if self.in_critical or (self.interested and self.__higher_priority(request)):
 	 		self.deffered.add(request['sender'])
-	 	#	log("deffered:" + str(request['sender']) + " " + str(self.replies))
 		else:
-			clock.increase()			##########################
+			clock.increase()
 			data = {'type': 'mutex_reply', 'tag': self.tag, 'timestamp': clock.value()}
 			send(data, dest=request['sender'])
 
@@ -123,11 +109,7 @@ class __Mutex(object):
 		
 		self.replies[msg['sender']] = True
 		if False not in self.replies:
-			log(str(self.replies))
-
 			self.in_critical = True
-		#	print "critical section", rank
-		#	log("critical section")
 
 			self.replies = [False for i in range(size)]
 			
@@ -150,6 +132,7 @@ condvar_lock = threading.Lock()
 condvars = {}
 
 class ConditionalVariable(object):
+	""" distributed conditional variable """
 
 	def __init__(self, tag):
 		with condvar_lock:
@@ -161,19 +144,15 @@ class ConditionalVariable(object):
 
 	def wait(self, mutex):
 		self.conditional.acquire()
-		#print rank, self.tag, "wait"
 		mutex.unlock()
 		self.is_waiting = True
 		self.conditional.wait()
-		#print rank, self.tag, "wake up"
 		mutex.lock()
-		#print rank, self.tag, "in critical"
 		self.conditional.release()
 
 	def notify(self):
 		data = {'type': 'conditional_notify', 'tag': self.tag}
 		multicast(data, ommit=[rank])
-		#print rank, self.tag, "notify"
 
 	def on_notify(self):
 		self.conditional.acquire()
@@ -197,9 +176,18 @@ def Resource(obj, tag, mutex=None, master=0):
 		return resources[tag]
 
 class __Resource(object):
-
+	""" wraper class to user defined objects. It shares object in distributed system by pulling and pushing that object to master node
+		this is only example of object sharing algorithm, not best one. Implementation of better algorithm can be done by rewriting 
+		methods of this class in a way, that __enter__ and __exit__ methods are used (it allows usage of 'with' statment to make sharing 
+		object as transparent as possible)
+	"""
 	def __init__(self, obj, tag, mutex="auto", master=0):
-		"""mutex is tag of mutex, not object itself"""
+		"""mutex is tag of mutex, not object itself
+			param: obj - object to share in distributed environment
+			param: tag - unique identifier of object in DS
+			param: mutex - mutex used to mutual exclusion, "auto" causes creation of new mutex, None causes not using of any mutex 
+			master: master - node for given object
+		"""
 		self.tag = tag
 		self.master = master
 		self.obj = obj
@@ -216,8 +204,8 @@ class __Resource(object):
 		resources[self.tag] = self
 
 	def __pull(self):
+		"""gets actual version of object from master"""
 		self.conditional.acquire()
-	#	log("inside __pull")
 		if self.master != rank:
 			data = {'type': 'resource_pull', 'tag': self.tag, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 			send(data, dest=self.master)
@@ -225,8 +213,8 @@ class __Resource(object):
 		self.conditional.release()
 
 	def __push(self):
+		"""pushes new version of object from master"""
 		self.conditional.acquire()
-	#	log("inside __push")
 		if self.master != rank:
 			data = {'type': 'resource_push', 'tag': self.tag, 'obj': self.obj, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 			send(data, dest=self.master)
@@ -235,7 +223,7 @@ class __Resource(object):
 		self.conditional.release()
 
 	def __enter__(self):
-	#	log("inside enter")
+		""" with statement, returns object wrapped by class """
 		if self.mutex:
 			self.mutex.lock()
 		self.conditional.acquire()
@@ -245,8 +233,8 @@ class __Resource(object):
 		return res
 
 	def __exit__(self, type, value, tb):
+		""" with statement, after user operations on object """
 		self.conditional.acquire()
-	#	log("inside exit")
 		self.__push()
 		if self.mutex:
 			self.mutex.unlock()
@@ -255,7 +243,6 @@ class __Resource(object):
 	def on_pull(self, msg):
 		""" action invoked by receiving thread when pull request """
 		self.conditional.acquire()
-	#	log("inside on_pull")
 		data = {'type': 'resource_reply_pull', 'tag': self.tag, 'obj': self.obj, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 		send(data, dest=msg['sender'])
 		self.conditional.release()
@@ -263,7 +250,6 @@ class __Resource(object):
 	def on_push(self, msg):
 		""" action invoked by receiving thread when push request (only in master process) """
 		self.conditional.acquire()
-	#	log("inside on_push")
 		self.obj = msg['obj']
 		data = {'type': 'resource_reply_push', 'tag': self.tag, 'master': self.master, 'mutex': self.mutex.tag if self.mutex else None}
 		send(data, dest=msg['sender'])
@@ -272,10 +258,7 @@ class __Resource(object):
 	def on_reply(self, msg):
 		""" invoked by receiving thread when reply to pull or push """
 		self.conditional.acquire()
-	#	log("inside on_reply")
 		if msg['type'] == 'resource_reply_pull' and msg['obj'] is not None:
-			log("resource_reply_pull")
-			#print "rpl", rank, msg
 			self.obj = msg['obj']
 		
 		self.conditional.notify()
@@ -291,8 +274,6 @@ def __receive_thread():
 	run = True
 	while run:
 		data = receive(source=MPI.ANY_SOURCE)
-	#	log("rcv " + str(data))
-		#print "recv", rank, clock.value(), data
 		
 		if data['type'].startswith('mutex_'):
 			process_mutex_message(data)
@@ -323,9 +304,7 @@ def process_conditional_message(msg):
 				condvars[msg['tag']].on_notify()
 
 def process_resource_message(msg):
-	#print "recv", rank, msg
 	res = Resource(None, msg['tag'], msg['mutex'], msg['master'])
-#	log("recv: Resource, " + res.tag + " " + res.mutex.tag)
 	if msg['type'] == 'resource_pull':
 		res.on_pull(msg)
 
